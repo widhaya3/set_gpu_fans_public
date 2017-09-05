@@ -37,27 +37,99 @@
 # to eek out a few percent more perf with very noticeable but still
 # tolerable fan noise).
 
-dir=/opt/set-gpu-fans
+SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+. ${SRCDIR}/settings
 
-/usr/bin/nvidia-smi -pm 1
+$NVSMI -pm 1
 
 # we need to launch the X server once for each display
 # making each of the PCI IDs the primary device in turn.
 
 # get PCI bus ids of Nvidia cards and convert from hexadecimal to decimal. watch out for the falling toothpicks.
-pciid=`lspci  | sed -n -e '/VGA compatib.*NVIDIA/s/^\(..\):\(..\).\(.\).*/printf "PCI:%d:%d:%d\\\\\\\\n" 0x\1 0x\2 0x\3;/p'`
-disp=0
-for s in `eval ${pciid}`
-do \
-    cfg=`mktemp /tmp/xorg-XXXXXXXX.conf`
-    sed -e s,@GPU_BUS_ID@,${s},    \
-        -e s,@SET_GPU_DIR@,${dir}, \
-        ${dir}/xorg.conf >> ${cfg}
-    # we keep one X server per GPU running indefinitely
-    # (if we let the X server die, the fan config does not persist, no matter what else)
-    xinit ${dir}/nvscmd run_forever -- :${disp} -once -config ${cfg} &
-    disp=$((disp+1))
-    sleep 10
-    rm -f ${cfg}
+PCIID=`lspci  | sed -n -e '/VGA compatib.*NVIDIA/s/^\(..\):\(..\).\(.\).*/printf "PCI:%d:%d:%d\\\\\\\\n" 0x\1 0x\2 0x\3;/p'`
+
+DISP=0
+PREV=0
+CFG=`mktemp /tmp/xorg-XXXXXXXX.conf`
+
+echo "\
+# simple single screen X server config with fake CRT attached
+
+Section \"ServerLayout\"
+    Identifier     \"Main\"\
+" >> $CFG
+
+for BUSID in `eval ${PCIID}`; do 
+	if [ "$DISP" -eq "0" ]; then
+		echo "    Screen      0 \"Screen0\"" >> $CFG
+	else
+		echo "    Screen      $DISP \"Screen$DISP\" RightOf \"Screen$PREV\"" >> $CFG
+	fi
+	PREV=$DISP
+    DISP=$(( DISP+1 ))
 done
 
+echo "\
+EndSection
+
+Section \"ServerFlags\"
+    Option         \"AllowEmptyInput\" \"on\"
+    Option         \"Xinerama\"        \"off\"
+    Option         \"SELinux\"         \"off\"
+EndSection
+" >> $CFG
+
+DISP=0
+
+for BUSID in `eval ${PCIID}`; do 
+	cat << EOF >> $CFG
+Section "Screen"
+    Identifier     "Screen${DISP}"
+    Device         "VideoCard${DISP}"
+    Monitor        "Monitor${DISP}"
+    DefaultDepth   24
+    Option         "AllowEmptyInitialConfiguration" "True"
+    Option         "UseDisplayDevice" "DFP-${DISP}"
+    Option         "ConnectedMonitor" "DFP-${DISP}"
+    Option         "CustomEDID" "DFP-${DISP}:${SRCDIR}/dfp-edid.bin"
+    Option         "Coolbits" "31"
+    SubSection "Display"
+        Depth   24
+        Modes   "1024x768"
+    EndSubSection
+EndSection
+
+Section "Device"
+    Identifier  "Videocard${DISP}"
+    Driver      "nvidia"
+    Option      "Coolbits" "31"
+    BusID       "${BUSID}"
+EndSection
+
+Section "Monitor"
+    Identifier      "Monitor${DISP}"
+    Vendorname      "Dummy Display"
+    Modelname       "1024x768"
+EndSection
+EOF
+    DISP=$(( DISP+1 ))
+done
+
+DISP_NO=0
+for BUSID in `eval ${PCIID}`; do 
+    # we keep one X server per GPU running indefinitely
+    # (if we let the X server die, the fan config does not persist, no matter what else)
+	EXTRA_MOD=${PWD}/nvscmd_extra_mod_${DISP_NO}.cfg
+	echo "Run xinit for card ${DISP_NO}, keep log at ${LOG}-${DISP_NO}."
+	echo "Do extra settings by edit ${EX_RUN_ONCE}-${DISP_NO}.cfg and ${EX_RUN_LOOP}-${DISP_NO}.cfg for card ${DISP_NO}."
+	xinit ${SRCDIR}/nvscmd run_forever -display :${DISP_NO} -- :${DISP_NO} -once -config ${CFG} &> ${LOG}-${DISP_NO} &
+	# set power limit
+	MPL="`nvidia-smi -q -d POWER -i ${DISP_NO} | grep 'Max Power Limit' | cut -d\: -f2 | cut -d\  -f2`"
+	PL=`awk "BEGIN {print $MPL*$PERCENT_POWER_LIMIT/100}"`
+	$NVSMI -pl $PL -i $DISP_NO
+
+    DISP_NO=$(( DISP_NO+1 ))
+	sleep 2
+done
+rm -f ${CFG}
+echo "Kill daemon by command 'killall nvscmd'. Edit script 'settings' as need."

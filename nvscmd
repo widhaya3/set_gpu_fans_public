@@ -1,4 +1,4 @@
-#!/bin/tcsh -f
+#!/bin/bash
 #
 #  Copyright 2016 Boris Dimitrov <dimiroll@gmail.com>.
 #
@@ -51,105 +51,121 @@
 #   Relative to 100% fan, the heuristic sacrafices 1.4% of perf to achieve
 #   humanly tolerable noise levels.
 #
-if ("x$1" == "xrun_forever") then
-    @ run_forever = 1
-    shift
-else
-    @ run_forever = 0
-endif
 
-if ("x$1" == "xstop") then
-    @ target = -1
-endif
+DISP=":0"
+while [ "$1" ]; do
+	if [ "x$1" == "xrun_forever" ]; then
+		RUN_FOREVER=1
+	elif [ "x$1" == "xstop" ]; then
+    	TARGET=-1
+	elif [ "x$1" == "x" || "x$1" == "xstart" ]; then
+    	# this means "use heuristic"
+    	TARGET=-3
+	elif [ "x$1" == "x-display" ]; then
+		shift
+		DISP=$1
+	else
+    	TARGET=$1
+	fi
+	shift
+done
 
-if ("x$1" == "x" || "x$1" == "xstart" || "x$1" == "x-display") then
-    # this means "use heuristic"
-    @ target = -3
-else
-    @ target = $1
-endif
-
-if ("x$1" != "x" && "x$1" != "x-display") then
-    shift
-endif
-
+SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+. ${SRCDIR}/settings
 
 # -10 aka null
-@ last_target = -10
-set last_friendly_target = "UNKNOWN"
+LAST_TARGET=-10
+LAST_FRIENDLY_TARGET="UNKNOWN"
 
-loop:
+DISP_NO=${DISP:1}
 
-    if ($target == -3) then
+EXTRA_RUN_ONCE=${EX_RUN_ONCE}-${DISP_NO}.cfg
+if [ ! -f "$EXTRA_RUN_ONCE" ]; then
+	cat << EOF > "$EXTRA_RUN_ONCE"
+#!/bin/bash
+
+#$NVSET -a "[gpu:${DISP_NO}]/GPUPowerMizerMode=1" $*
+#$NVSET -a "[gpu:${DISP_NO}]/GPUGraphicsClockOffset[3]=100" $* # 1060=100,
+#$NVSET -a "[gpu:${DISP_NO}]/GPUMemoryTransferRateOffset[3]=900" $* # 1060=900,
+EOF
+	chmod 755 $EXTRA_RUN_ONCE
+else
+	$EXTRA_RUN_ONCE
+fi
+
+EXTRA_RUN_LOOP=${EX_RUN_LOOP}-${DISP_NO}.cfg
+if [ ! -f "$EXTRA_RUN_LOOP" ]; then
+	cat << EOF > "$EXTRA_RUN_LOOP"
+#!/bin/bash
+
+# for testing
+EOF
+	chmod 755 $EXTRA_RUN_LOOP
+fi
+
+ONCE=1
+
+while [ "$RUN_FOREVER" ] || [ "$ONCE" -gt 0 ]; do
+
+    if [ "$TARGET" == "-3" ]; then
         # execute heuristic
-        set foo = (`/usr/bin/nvidia-smi dmon -s p -c 1 | sort -n -k3 | tail -1`)
-        @ temp = $foo[3]
-        @ target = -2
-        if (${temp} < 29) then
-            @ target = -1
-        endif
-        if (${temp} < 36 && ${temp} >= 31) then
-            @ target = 50
-        endif
-        if (${temp} < 43 && ${temp} >= 38) then
-            @ target = 55
-        endif
-        if (${temp} < 49 && ${temp} >= 44) then
-            @ target = 60
-        endif
-        if (${temp} < 54 && ${temp} >= 50) then
-            @ target = 65
-        endif
-        if (${temp} < 61 && ${temp} >= 55) then
-            @ target = 75
-        endif
-        if (${temp} < 70 && ${temp} >= 65) then
-            @ target = 80
-        endif
-        if (${temp} >= 73) then
-            @ target = 85
-        endif
-        if (${target} == -2 || ${target} == ${last_target} || ${target} == ${last_friendly_target}) then
-            echo "Current temperature is ${temp}.  No adjustments needed."
+		TEMP=`$NVSMI dmon -i ${DISP_NO} -s p -c 1 | sort -n -k3 | tail -1 | awk '{ printf $3 }'`
+        TARGET=-2
+		if [ $TEMP -lt 30 ]; then
+			TARGET=-1
+		elif [ $TEMP -lt 40 ]; then
+			TARGET=50
+		elif [ $TEMP -lt 50 ]; then
+			TARGET=60
+		elif [ $TEMP -lt 60 ]; then
+			TARGET=70
+		elif [ $TEMP -lt 65 ]; then
+			TARGET=80
+		elif [ $TEMP -lt 70 ]; then
+			TARGET=90
+		else
+			TARGET=100
+		fi
+        if [ $TARGET -eq -2 ] || [ "$TARGET" == "$LAST_TARGET" ] || [ "$TARGET" == "$LAST_FRIENDLY_TARGET" ]; then
+            echo "Current temperature is ${TEMP}.  No adjustments needed."
+		elif [ $TARGET -ge 0 ]; then
+            echo "Current temperature is ${TEMP}.  Setting fan speed to ${TARGET} (from ${LAST_FRIENDLY_TARGET})."
         else
-            if (${target} >= 0) then
-                echo "Current temperature is ${temp}.  Setting fan speed to ${target} (from ${last_friendly_target})."
-            else
-                echo "Current temperature is ${temp}.  Setting fan speed to AUTO."            
-            endif
-        endif
-    endif
+            echo "Current temperature is ${TEMP}.  Setting fan speed to AUTO."            
+        fi
+    fi
 
-    if (${last_target} != ${target} && ${last_friendly_target} != ${target}) then
+    if [ "$LAST_TARGET" != "$TARGET" ] && [ "$LAST_FRIENDLY_TARGET" != "$TARGET" ]; then
         # relinquish fan speed control back to the system
-        if ("x${target}" == "x-1") then
-            /usr/bin/nvidia-settings -a '[gpu:0]/GPUFanControlState=0'  $*
-        endif
+        if [ $TARGET -eq -1 ]; then
+            $NVSET -a "[gpu:${DISP_NO}]/GPUFanControlState=0"  $*
+        fi
     
-        # set fan speed on primary GPU to target
-        if (${target} >= 0) then
-            /usr/bin/nvidia-settings -a '[gpu:0]/GPUFanControlState=1' -a '[fan:0]/GPUTargetFanSpeed='${target}  $*
-        endif
-    endif
+        # set fan speed on primary GPU to TARGET
+        if [ $TARGET -ge 0 ]; then
+            $NVSET -a "[gpu:${DISP_NO}]/GPUFanControlState=1" -a "[fan:${DISP_NO}]/GPUTargetFanSpeed=${TARGET}" $*
+			$EXTRA_RUN_LOOP
+        fi
+	fi
 
-    @ last_target = ${target}
-    @ target = -3
+	LAST_TARGET=$TARGET
+	TARGET=-3
     
-    if (${last_target} >= 0) then
-        set last_friendly_target = ${last_target}
-    endif
-    if (${last_target} == -1) then
-        set last_friendly_target = "AUTO"
-    endif
-    # -2 means preserve
-    if (${last_target} < -2) then
-        set last_friendly_target = "UNKNOWN"
-    endif
+    if [ $LAST_TARGET -ge 0 ]; then
+		LAST_FRIENDLY_TARGET=$LAST_TARGET
+    elif [ $LAST_TARGET -eq -1 ]; then
+		LAST_FRIENDLY_TARGET="AUTO"
+    elif [ $LAST_TARGET -lt -2 ]; then
+    	# -2 means preserve
+		LAST_FRIENDLY_TARGET="UNKNOWN"
+	fi
+
+	if [ $ONCE -gt 0 ]; then
+		ONCE=$(( ONCE-1 ))
+	fi
 
     sleep 5
 
-if ( ${run_forever} == 1 ) then
-    goto loop
-endif
+done
 
 
