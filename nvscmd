@@ -58,7 +58,7 @@ while [ "$1" ]; do
 		RUN_FOREVER=1
 	elif [ "x$1" == "xstop" ]; then
     	TARGET=-1
-	elif [ "x$1" == "x" || "x$1" == "xstart" ]; then
+	elif [ "x$1" == "x" ] || [ "x$1" == "xstart" ]; then
     	# this means "use heuristic"
     	TARGET=-3
 	elif [ "x$1" == "x-display" ]; then
@@ -69,6 +69,10 @@ while [ "$1" ]; do
 	fi
 	shift
 done
+re='^-?[0-9]+([.][0-9]+)?$'
+if ! [[ $TARGET =~ $re ]] ; then
+	TARGET=-1
+fi
 
 SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 . ${SRCDIR}/settings
