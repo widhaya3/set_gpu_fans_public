@@ -52,7 +52,7 @@
 #   humanly tolerable noise levels.
 #
 
-DISP=":0"
+NVIDIA_GPU_NO=0
 while [ "$1" ]; do
 	if [ "x$1" == "xrun_forever" ]; then
 		RUN_FOREVER=1
@@ -63,12 +63,13 @@ while [ "$1" ]; do
     	TARGET=-3
 	elif [ "x$1" == "x-display" ]; then
 		shift
-		DISP=$1
+		NVIDIA_GPU_NO=$1
 	else
     	TARGET=$1
 	fi
 	shift
 done
+echo "NVIDIA_GPU_NO=$NVIDIA_GPU_NO"
 re='^-?[0-9]+([.][0-9]+)?$'
 if ! [[ $TARGET =~ $re ]] ; then
 	TARGET=-1
@@ -81,23 +82,21 @@ SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 LAST_TARGET=-10
 LAST_FRIENDLY_TARGET="UNKNOWN"
 
-DISP_NO=${DISP:1}
-
-EXTRA_RUN_ONCE=${EX_RUN_ONCE}-${DISP_NO}.cfg
+EXTRA_RUN_ONCE=${EX_RUN_ONCE}-${NVIDIA_GPU_NO}.cfg
 if [ ! -f "$EXTRA_RUN_ONCE" ]; then
 	cat << EOF > "$EXTRA_RUN_ONCE"
 #!/bin/bash
 
-#$NVSET -a "[gpu:${DISP_NO}]/GPUPowerMizerMode=1" $*
-#$NVSET -a "[gpu:${DISP_NO}]/GPUGraphicsClockOffset[3]=100" $* # 1060=100,
-#$NVSET -a "[gpu:${DISP_NO}]/GPUMemoryTransferRateOffset[3]=900" $* # 1060=900,
+$NVSET -a "[gpu:${NVIDIA_GPU_NO}]/GPUPowerMizerMode=1" $*
+$NVSET -a "[gpu:${NVIDIA_GPU_NO}]/GPUGraphicsClockOffset[3]=50" $* # 1060,1070,1080=100
+$NVSET -a "[gpu:${NVIDIA_GPU_NO}]/GPUMemoryTransferRateOffset[3]=200" $* # 1060,1070=900,1080=1100
 EOF
 	chmod 755 $EXTRA_RUN_ONCE
 else
 	$EXTRA_RUN_ONCE
 fi
 
-EXTRA_RUN_LOOP=${EX_RUN_LOOP}-${DISP_NO}.cfg
+EXTRA_RUN_LOOP=${EX_RUN_LOOP}-${NVIDIA_GPU_NO}.cfg
 if [ ! -f "$EXTRA_RUN_LOOP" ]; then
 	cat << EOF > "$EXTRA_RUN_LOOP"
 #!/bin/bash
@@ -113,7 +112,7 @@ while [ "$RUN_FOREVER" ] || [ "$ONCE" -gt 0 ]; do
 
     if [ "$TARGET" == "-3" ]; then
         # execute heuristic
-		TEMP=`$NVSMI dmon -i ${DISP_NO} -s p -c 1 | sort -n -k3 | tail -1 | awk '{ printf $3 }'`
+		TEMP=`$NVSMI dmon -i ${NVIDIA_GPU_NO} -s p -c 1 | sort -n -k3 | tail -1 | awk '{ printf $3 }'`
         TARGET=-2
 		if [ $TEMP -lt 30 ]; then
 			TARGET=-1
@@ -125,12 +124,15 @@ while [ "$RUN_FOREVER" ] || [ "$ONCE" -gt 0 ]; do
 			TARGET=70
 		elif [ $TEMP -lt 65 ]; then
 			TARGET=80
-		elif [ $TEMP -lt 70 ]; then
+		elif [ $TEMP -lt 68 ]; then
 			TARGET=90
+		elif [ $TEMP -lt 70 ]; then
+			TARGET=95
 		else
 			TARGET=100
 		fi
         if [ $TARGET -eq -2 ] || [ "$TARGET" == "$LAST_TARGET" ] || [ "$TARGET" == "$LAST_FRIENDLY_TARGET" ]; then
+			echo "TARGET=$TARGET, LAST_TARGET=$LAST_TARGET, LAST_FRIENDLY_TARGET=$LAT_FRIENDLY_TARGET"
             echo "Current temperature is ${TEMP}.  No adjustments needed."
 		elif [ $TARGET -ge 0 ]; then
             echo "Current temperature is ${TEMP}.  Setting fan speed to ${TARGET} (from ${LAST_FRIENDLY_TARGET})."
@@ -139,15 +141,15 @@ while [ "$RUN_FOREVER" ] || [ "$ONCE" -gt 0 ]; do
         fi
     fi
 
-    if [ "$LAST_TARGET" != "$TARGET" ] && [ "$LAST_FRIENDLY_TARGET" != "$TARGET" ]; then
+	if [ "$LAST_TARGET" != "$TARGET" ] && [ "$LAST_FRIENDLY_TARGET" != "$TARGET" ]; then
         # relinquish fan speed control back to the system
         if [ $TARGET -eq -1 ]; then
-            $NVSET -a "[gpu:${DISP_NO}]/GPUFanControlState=0"  $*
+            $NVSET -a "[gpu:${NVIDIA_GPU_NO}]/GPUFanControlState=0"  $*
         fi
     
         # set fan speed on primary GPU to TARGET
         if [ $TARGET -ge 0 ]; then
-            $NVSET -a "[gpu:${DISP_NO}]/GPUFanControlState=1" -a "[fan:${DISP_NO}]/GPUTargetFanSpeed=${TARGET}" $*
+            $NVSET -a "[gpu:${NVIDIA_GPU_NO}]/GPUFanControlState=1" -a "[fan:${NVIDIA_GPU_NO}]/GPUTargetFanSpeed=${TARGET}" $*
 			$EXTRA_RUN_LOOP
         fi
 	fi

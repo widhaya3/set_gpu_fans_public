@@ -116,21 +116,25 @@ EOF
 done
 
 DISP_NO=0
-for BUSID in `eval ${PCIID}`; do 
-    # we keep one X server per GPU running indefinitely
-    # (if we let the X server die, the fan config does not persist, no matter what else)
-	EXTRA_MOD=${PWD}/nvscmd_extra_mod_${DISP_NO}.cfg
-	echo "Run xinit for card ${DISP_NO}, keep log at ${LOG}-${DISP_NO}."
-	echo "Do extra settings by edit ${EX_RUN_ONCE}-${DISP_NO}.cfg and ${EX_RUN_LOOP}-${DISP_NO}.cfg for card ${DISP_NO}."
-	echo "xinit ${SRCDIR}/nvscmd run_forever -display :${DISP_NO} -- :${DISP_NO} -once -config ${CFG} &> ${LOG}-${DISP_NO} &"
-	xinit ${SRCDIR}/nvscmd run_forever -display :${DISP_NO} -- :${DISP_NO} -once -config ${CFG} &> ${LOG}-${DISP_NO} &
-	# set power limit
-	MPL="`nvidia-smi -q -d POWER -i ${DISP_NO} | grep 'Max Power Limit' | cut -d\: -f2 | cut -d\  -f2`"
-	PL=`awk "BEGIN {print $MPL*$PERCENT_POWER_LIMIT/100}"`
-	$NVSMI -pl $PL -i $DISP_NO
-
+NVIDIA_GPU_NO=0
+lspci | grep VGA | while read PCI; do
+	if [ "x`echo $PCI | grep NVIDIA`" != "x" ]; then
+	    # we keep one X server per GPU running indefinitely
+	    # (if we let the X server die, the fan config does not persist, no matter what else)
+		EXTRA_MOD=${PWD}/nvscmd_extra_mod_${NVIDIA_GPU_NO}.cfg
+		echo "Run xinit for card ${NVIDIA_GPU_NO}, keep log at ${LOG}-${NVIDIA_GPU_NO}."
+		echo "Do extra settings by edit ${EX_RUN_ONCE}-${NVIDIA_GPU_NO}.cfg and ${EX_RUN_LOOP}-${NVIDIA_GPU_NO}.cfg for card ${NVIDIA_GPU_NO}."
+		echo "xinit ${SRCDIR}/nvscmd run_forever -display ${NVIDIA_GPU_NO} -- :${DISP_NO} -once -config ${CFG} &> ${LOG}-${NVIDIA_GPU_NO} &"
+		xinit ${SRCDIR}/nvscmd run_forever -display ${NVIDIA_GPU_NO} -- :${DISP_NO} -once -config ${CFG} &> ${LOG}-${NVIDIA_GPU_NO} &
+		# set power limit
+		MPL="`nvidia-smi -q -d POWER -i ${NVIDIA_GPU_NO} | grep 'Max Power Limit' | cut -d\: -f2 | cut -d\  -f2`"
+		PL=`awk "BEGIN {print $MPL*$PERCENT_POWER_LIMIT/100}"`
+		$NVSMI -pl $PL -i $NVIDIA_GPU_NO
+	
+	    NVIDIA_GPU_NO=$(( NVIDIA_GPU_NO+1 ))
+		sleep 2
+	fi
     DISP_NO=$(( DISP_NO+1 ))
-	sleep 2
 done
 rm -f ${CFG}
-echo "Kill daemon by command 'killall Xorg'. Edit script 'settings' as need."
+echo "Kill daemon by command 'killall Xorg'. Edit script 'settings' as needed."
