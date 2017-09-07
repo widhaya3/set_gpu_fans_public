@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# PREREQUISITES PACKAGES: nvidia-driver nvidia-smi awk
+
+NVSMI=`which nvidia-smi`
+NVSET=`which nvidia-settings`
+LOG=/var/log/set_gpu_fans_nv
+CFGDIR=/etc/set_gpu_fans_nv
+if [ ! -d "$CFGDIR" ]; then
+	mkdir -p $CFGDIR
+fi
+EX_RUN_ONCE=${CFGDIR}/nvscmd_exmod_once
+EX_RUN_LOOP=${CFGDIR}/nvscmd_exmod_loop
+
+#POWER LIMIT (nvidia-smi -pl)
+PERCENT_POWER_LIMIT=75
